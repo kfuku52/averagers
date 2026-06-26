@@ -172,6 +172,59 @@ def test_get_temp_dif_matches_dh2006_average_minus_observed():
     )
 
 
+def test_least_squares_recovers_dh2006_params():
+    df = pandas.DataFrame(
+        {
+            "Min": [9.0, 11.0, 8.0, 13.0],
+            "Max": [19.0, 24.0, 22.0, 27.0],
+            "Min_next": [10.0, 9.0, 12.0, 14.0],
+            "Sunset_nondimensional": [0.68, 0.72, 0.65, 0.7],
+        }
+    )
+    expected = {"CD": 0.55, "CN": 0.22}
+    df["Ave"] = averagers.get_average_temperature(df, expected, method="DH2006")
+
+    params = averagers.get_params(
+        df,
+        method="DH2006",
+        param_min=0,
+        param_max=1,
+        optimizer="least_squares",
+    )
+
+    assert numpy.isclose(params["CD"], expected["CD"])
+    assert numpy.isclose(params["CN"], expected["CN"])
+    assert numpy.isclose(params["variance"], 0)
+
+
+def test_least_squares_recovers_kf_params():
+    df = pandas.DataFrame(
+        {
+            "Min": [9.0, 11.0, 8.0, 13.0],
+            "Max": [19.0, 24.0, 22.0, 27.0],
+            "Max_prev": [18.0, 19.0, 24.0, 22.0],
+            "Min_next": [10.0, 9.0, 12.0, 14.0],
+            "Sunrise_nondimensional": [0.25, 0.23, 0.28, 0.24],
+            "Sunset_nondimensional": [0.68, 0.72, 0.65, 0.7],
+        }
+    )
+    expected = {"C1": 0.2, "C2": 0.6, "C3": 0.15}
+    df["Ave"] = averagers.get_average_temperature(df, expected, method="KF")
+
+    params = averagers.get_params(
+        df,
+        method="KF",
+        param_min=0,
+        param_max=1,
+        optimizer="least_squares",
+    )
+
+    assert numpy.isclose(params["C1"], expected["C1"])
+    assert numpy.isclose(params["C2"], expected["C2"])
+    assert numpy.isclose(params["C3"], expected["C3"])
+    assert numpy.isclose(params["variance"], 0)
+
+
 def test_get_month_params_wraps_windows_across_year_boundary():
     df = pandas.DataFrame(
         {
@@ -194,6 +247,84 @@ def test_get_month_params_wraps_windows_across_year_boundary():
     )
 
     assert set(params) == {"1", "2", "12"}
+
+
+def test_smooth_month_params_wraps_across_year_boundary():
+    params = {
+        "12": {"CD": 0.2, "CN": 0.4},
+        "1": {"CD": 0.5, "CN": 0.7},
+        "2": {"CD": 0.8, "CN": 1.0},
+    }
+
+    smoothed = averagers.smooth_month_params(params, smooth_window=1, method="DH2006")
+
+    assert numpy.isclose(smoothed["1"]["CD"], 0.5)
+    assert numpy.isclose(smoothed["1"]["CN"], 0.7)
+
+
+def test_cross_validate_estimates_and_select_month_window():
+    rows = []
+    for year in [2020, 2021, 2022]:
+        for month in range(1, 13):
+            rows.append(
+                {
+                    "Year": year,
+                    "Month": month,
+                    "Min": 5.0 + month / 2,
+                    "Max": 15.0 + month / 2 + (year - 2020) * 0.2,
+                    "Min_next": 5.5 + month / 2,
+                    "Sunset_nondimensional": 0.6 + (month % 3) * 0.03,
+                }
+            )
+    df = pandas.DataFrame(rows)
+    df["Ave"] = averagers.get_average_temperature(
+        df,
+        {"CD": 0.5, "CN": 0.25},
+        method="DH2006",
+    )
+
+    predictions, metrics = averagers.cross_validate_estimates(
+        df,
+        specs=[
+            {"name": "Simple mean", "column": "Ave_simple", "kind": "simple"},
+            {
+                "name": "DH2006 monthly ws1",
+                "column": "Ave_est_monthly_ws1",
+                "kind": "monthly",
+                "method": "DH2006",
+                "window_size": 1,
+                "optimizer": "least_squares",
+            },
+            {
+                "name": "DH2006 seasonal smooth",
+                "column": "Ave_est_seasonal",
+                "kind": "cyclic",
+                "method": "DH2006",
+                "window_size": 1,
+                "smooth_window": 1,
+                "optimizer": "least_squares",
+            },
+        ],
+    )
+
+    assert {"Ave_simple", "Ave_est_monthly_ws1", "Ave_est_seasonal"}.issubset(
+        predictions.columns
+    )
+    assert list(metrics["estimate"]) == [
+        "Simple mean",
+        "DH2006 monthly ws1",
+        "DH2006 seasonal smooth",
+    ]
+
+    selection = averagers.select_month_window(
+        df,
+        windows=[0, 1],
+        method="DH2006",
+        optimizer="least_squares",
+    )
+
+    assert selection["best_window"] in {0, 1}
+    assert selection["metrics"].shape[0] == 2
 
 
 def test_get_photoperiod_returns_local_day_fractions():

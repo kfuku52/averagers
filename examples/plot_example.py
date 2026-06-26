@@ -34,7 +34,7 @@ def build_example_data():
     )
     weather = weather.join(photoperiod[["Sunset_nondimensional"]])
     started = perf_counter()
-    params = averagers.get_params(weather, method="DH2006")
+    params = averagers.get_params(weather, method="DH2006", optimizer="least_squares")
     fit_seconds = perf_counter() - started
     weather["Ave_sim"] = averagers.get_average_temperature(
         weather,

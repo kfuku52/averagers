@@ -31,9 +31,13 @@ pytest
 
 ## Data Source
 
-`fetch_power_daily_temperature` downloads real daily near-surface temperature data from the [NASA POWER Daily API](https://power.larc.nasa.gov/docs/services/api/temporal/daily/). It requests `T2M_MIN`, `T2M_MAX`, and `T2M`, then returns columns named `Min`, `Max`, `Ave`, and `Min_next` for direct use with the package functions.
+`fetch_power_daily_temperature` downloads real daily near-surface temperature data from the [NASA POWER Daily API](https://power.larc.nasa.gov/docs/services/api/temporal/daily/). It requests `T2M_MIN`, `T2M_MAX`, and `T2M`, then returns columns named `Min`, `Max`, `Ave`, and `Min_next` for direct use with the package functions. Pass `add_max_prev=True` to also return `Max_prev` for the KF method.
 
 `Sunrise_nondimensional` and `Sunset_nondimensional` are fractions of the day between 0 and 1. Calculation functions also accept legacy 0-24 hour values for these columns.
+
+## Fitting and Comparison Helpers
+
+`get_params(..., optimizer="least_squares")` provides a fast linear fit for DH2006 and KF parameters. `cross_validate_estimates` builds leave-one-fold-out predictions for simple, yearly, monthly, and cyclic-smoothed monthly estimates. `select_month_window` compares monthly `window_size` values and returns the best one by an error metric such as RMSE.
 
 ## Estimated Mean Plot
 
@@ -72,7 +76,7 @@ photoperiod = averagers.get_photoperiod(
 weather = weather.join(photoperiod[["Sunset_nondimensional"]])
 
 started = perf_counter()
-params = averagers.get_params(weather, method="DH2006")
+params = averagers.get_params(weather, method="DH2006", optimizer="least_squares")
 fit_seconds = perf_counter() - started
 
 weather["Ave_sim"] = averagers.get_average_temperature(
@@ -116,21 +120,21 @@ weather = weather.join(
         ["Sunset_nondimensional"]
     ]
 )
-weather["Ave_simple"] = averagers.get_simple_average_temperature(weather)
-weather["Ave_est_cv"] = pd.NA
 weather["Year"] = weather["Date"].dt.year
 
-for year in sorted(weather["Year"].unique()):
-    train = weather.loc[weather["Year"] != year].dropna(
-        subset=["Ave", "Min", "Max", "Min_next", "Sunset_nondimensional"]
-    )
-    params = averagers.get_params(train, method="DH2006")
-    test_mask = weather["Year"] == year
-    weather.loc[test_mask, "Ave_est_cv"] = averagers.get_average_temperature(
-        weather.loc[test_mask],
-        params=params,
-        method="DH2006",
-    )
+weather, metrics = averagers.cross_validate_estimates(
+    weather,
+    specs=[
+        {"name": "Simple mean", "column": "Ave_simple", "kind": "simple"},
+        {
+            "name": "DH2006 estimated",
+            "column": "Ave_est_cv",
+            "kind": "yearly",
+            "method": "DH2006",
+            "optimizer": "least_squares",
+        },
+    ],
+)
 
 averagers.plot_estimation_error_comparison(
     weather,
@@ -151,78 +155,100 @@ python examples/error_comparison.py
 
 The script downloads daily data from 2020-01-01 to 2022-12-31 and writes `docs/error_comparison.png`.
 
-## Parameter Window Comparison
+## Parameter Window and Method Comparison
 
-![DH2006 parameter-window error comparison, Tokyo 2020-2022](docs/window_size_comparison.png)
+![Parameter and method error comparison, Tokyo 2020-2022](docs/window_size_comparison.png)
 
-The monthly parameter estimator can be run with different month-window sizes. This example compares a single yearly DH2006 fit with monthly DH2006 fits using `window_size=0..3`.
+The monthly parameter estimator can be run with different month-window sizes. This example compares a simple min/max mean, a single yearly DH2006 fit, monthly DH2006 fits using `window_size=0..3`, a smoothed seasonal DH2006 option, and KF fits. `select_month_window` returns the best DH2006 month window by cross-validated RMSE.
 
 ```python
 import pandas as pd
 
 import averagers
 
-weather = averagers.fetch_power_daily_temperature("2020-01-01", "2022-12-31", 35.681, 139.767)
+weather = averagers.fetch_power_daily_temperature(
+    "2020-01-01",
+    "2022-12-31",
+    35.681,
+    139.767,
+    add_max_prev=True,
+)
 weather["Date"] = pd.to_datetime(weather["Date"])
 weather["Year"] = weather["Date"].dt.year
 weather = weather.join(
     averagers.get_photoperiod("2020-01-01", "2022-12-31", 35.681, 139.767, timezone=9)[
-        ["Sunset_nondimensional"]
+        ["Sunrise_nondimensional", "Sunset_nondimensional"]
     ]
 )
-weather["Ave_simple"] = averagers.get_simple_average_temperature(weather)
-weather["Ave_est_yearly"] = pd.NA
-for window_size in [0, 1, 2, 3]:
-    weather[f"Ave_est_monthly_ws{window_size}"] = pd.NA
 
-for year in sorted(weather["Year"].unique()):
-    train = weather.loc[weather["Year"] != year].dropna(
-        subset=["Ave", "Min", "Max", "Min_next", "Sunset_nondimensional", "Month"]
-    )
-    test_mask = weather["Year"] == year
+specs = [
+    {"name": "Simple mean", "column": "Ave_simple", "kind": "simple"},
+    {
+        "name": "DH2006 yearly",
+        "column": "Ave_est_dh2006_yearly",
+        "kind": "yearly",
+        "method": "DH2006",
+        "optimizer": "least_squares",
+    },
+]
+specs.extend(
+    {
+        "name": f"DH2006 monthly ws{window_size}",
+        "column": f"Ave_est_dh2006_monthly_ws{window_size}",
+        "kind": "monthly",
+        "method": "DH2006",
+        "window_size": window_size,
+        "optimizer": "least_squares",
+    }
+    for window_size in [0, 1, 2, 3]
+)
+specs.extend(
+    [
+        {
+            "name": "DH2006 seasonal smooth",
+            "column": "Ave_est_dh2006_seasonal",
+            "kind": "cyclic",
+            "method": "DH2006",
+            "window_size": 1,
+            "smooth_window": 1,
+            "optimizer": "least_squares",
+        },
+        {
+            "name": "KF yearly",
+            "column": "Ave_est_kf_yearly",
+            "kind": "yearly",
+            "method": "KF",
+            "optimizer": "least_squares",
+        },
+        {
+            "name": "KF monthly ws1",
+            "column": "Ave_est_kf_monthly_ws1",
+            "kind": "monthly",
+            "method": "KF",
+            "window_size": 1,
+            "optimizer": "least_squares",
+        },
+    ]
+)
 
-    yearly_params = averagers.get_params(train, method="DH2006")
-    weather.loc[test_mask, "Ave_est_yearly"] = averagers.get_average_temperature(
-        weather.loc[test_mask],
-        params=yearly_params,
-        method="DH2006",
-    )
-
-    for window_size in [0, 1, 2, 3]:
-        monthly_params = averagers.get_month_params(
-            train,
-            method="DH2006",
-            window_size=window_size,
-        )
-        weather.loc[test_mask, f"Ave_est_monthly_ws{window_size}"] = (
-            averagers.get_month_average_temperature(
-                weather.loc[test_mask].copy(),
-                monthly_params,
-                method="DH2006",
-            )
-        )
+weather, metrics = averagers.cross_validate_estimates(weather, specs=specs)
+selection = averagers.select_month_window(
+    weather,
+    windows=[0, 1, 2, 3],
+    method="DH2006",
+    optimizer="least_squares",
+)
 
 averagers.plot_estimation_error_comparison(
     weather,
-    estimate_columns=[
-        "Ave_simple",
-        "Ave_est_yearly",
-        "Ave_est_monthly_ws0",
-        "Ave_est_monthly_ws1",
-        "Ave_est_monthly_ws2",
-        "Ave_est_monthly_ws3",
-    ],
-    labels={
-        "Ave_simple": "Simple mean",
-        "Ave_est_yearly": "DH2006 yearly",
-        "Ave_est_monthly_ws0": "DH2006 monthly ws0",
-        "Ave_est_monthly_ws1": "DH2006 monthly ws1",
-        "Ave_est_monthly_ws2": "DH2006 monthly ws2",
-        "Ave_est_monthly_ws3": "DH2006 monthly ws3",
-    },
+    estimate_columns=[spec["column"] for spec in specs],
+    labels={spec["column"]: spec["name"] for spec in specs},
     output="docs/window_size_comparison.png",
     legend_outside=True,
 )
+
+print(metrics[["estimate", "RMSE", "Min error", "Max error"]].round(3))
+print("Best DH2006 monthly window:", selection["best_window"])
 ```
 
 Run the script version:
@@ -231,7 +257,7 @@ Run the script version:
 python examples/window_size_comparison.py
 ```
 
-In the generated Tokyo 2020-2022 example, the lowest RMSE is from `DH2006 monthly ws1`.
+In the generated Tokyo 2020-2022 example, the lowest DH2006 monthly-window RMSE is selected automatically by `select_month_window`.
 
 ## Citation
 

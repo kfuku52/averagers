@@ -33,6 +33,14 @@ def _require_params(params, names):
         raise ValueError(f"Missing required parameters: {', '.join(missing)}")
 
 
+def _method_required_columns(method):
+    method = _validate_method(method)
+    required_columns = ["Min", "Max", "Min_next", "Sunset_nondimensional"]
+    if method == "KF":
+        required_columns.extend(["Max_prev", "Sunrise_nondimensional"])
+    return required_columns
+
+
 def _as_day_fraction(values, name):
     """Return day fractions, accepting legacy 0-24 hour values."""
     if isinstance(values, pandas.Series):
@@ -119,11 +127,7 @@ def get_params_pulp(df, CDmin=0, CDmax=100, CNmin=0, CNmax=100):
 def get_average_temperature(df, params, method):
     method = _validate_method(method)
     _require_params(params, _METHOD_PARAMS[method])
-
-    required_columns = ["Min", "Max", "Min_next", "Sunset_nondimensional"]
-    if method == "KF":
-        required_columns.extend(["Max_prev", "Sunrise_nondimensional"])
-    _require_columns(df, required_columns)
+    _require_columns(df, _method_required_columns(method))
 
     min1 = df.loc[:, "Min"]
     max1 = df.loc[:, "Max"]
@@ -397,6 +401,83 @@ def get_month_average_temperature(df, mparams, method):
     return result
 
 
+def _temperature_model_terms(df, method):
+    method = _validate_method(method)
+    _require_columns(df, _method_required_columns(method))
+
+    min1 = pandas.to_numeric(df.loc[:, "Min"], errors="raise").astype(float)
+    max1 = pandas.to_numeric(df.loc[:, "Max"], errors="raise").astype(float)
+    min2 = pandas.to_numeric(df.loc[:, "Min_next"], errors="raise").astype(float)
+    sunset = _as_day_fraction(df.loc[:, "Sunset_nondimensional"], "Sunset_nondimensional")
+
+    if method == "DH2006":
+        base = (min1 * sunset) + (min2 * (1 - sunset))
+        design = pandas.DataFrame(
+            {
+                "CD": (max1 - min1) * sunset,
+                "CN": (max1 - min2) * (1 - sunset),
+            },
+            index=df.index,
+        )
+        return base.astype(float), design.astype(float)
+
+    max0 = pandas.to_numeric(df.loc[:, "Max_prev"], errors="raise").astype(float)
+    sunrise = _as_day_fraction(df.loc[:, "Sunrise_nondimensional"], "Sunrise_nondimensional")
+    if ((sunset - sunrise).dropna() < 0).any():
+        raise ValueError("Sunset_nondimensional must be later than Sunrise_nondimensional")
+
+    prop1 = sunrise
+    prop2 = sunset - sunrise
+    prop3 = 1 - sunset
+    base = (min1 * prop1) + (min1 * prop2) + (min2 * prop3)
+    design = pandas.DataFrame(
+        {
+            "C1": (max0 - min1) * prop1,
+            "C2": (max1 - min1) * prop2,
+            "C3": (max1 - min2) * prop3,
+        },
+        index=df.index,
+    )
+    return base.astype(float), design.astype(float)
+
+
+def get_params_least_squares(df, param_min=0, param_max=10, method="DH2006"):
+    """Fit temperature-estimation parameters with linear least squares."""
+    method = _validate_method(method)
+    if param_min > param_max:
+        raise ValueError("param_min must be <= param_max")
+    if df.empty:
+        raise ValueError("df must contain at least one row")
+    _require_columns(df, ["Ave"])
+
+    base, design = _temperature_model_terms(df, method)
+    training = pandas.concat(
+        [
+            pandas.to_numeric(df.loc[:, "Ave"], errors="raise").rename("Ave"),
+            base.rename("_base"),
+            design,
+        ],
+        axis=1,
+    ).dropna()
+    if training.empty:
+        raise ValueError("df must contain at least one complete row")
+
+    param_names = list(_METHOD_PARAMS[method])
+    matrix = training.loc[:, param_names].to_numpy(dtype=float)
+    target = (
+        training.loc[:, "Ave"].to_numpy(dtype=float)
+        - training.loc[:, "_base"].to_numpy(dtype=float)
+    )
+    params, *_ = numpy.linalg.lstsq(matrix, target, rcond=None)
+    params = numpy.clip(params, param_min, param_max)
+
+    out = dict(zip(param_names, [float(value) for value in params]))
+    estimated = get_average_temperature(df.loc[training.index, :], out, method=method)
+    variance = ((estimated - training.loc[:, "Ave"]) ** 2).mean()
+    out["variance"] = float(variance)
+    return out
+
+
 def get_params(
     df,
     param_min=0,
@@ -406,19 +487,35 @@ def get_params(
     method="DH2006",
     num_grid=3,
     verbose=False,
+    optimizer="grid",
 ):
     method = _validate_method(method)
+    if param_min > param_max:
+        raise ValueError("param_min must be <= param_max")
+    if df.empty:
+        raise ValueError("df must contain at least one row")
+    _require_columns(df, ["Ave"])
+
+    optimizer = optimizer.lower().replace("-", "_")
+    if optimizer in {"least_squares", "ls"}:
+        out = get_params_least_squares(
+            df,
+            param_min=param_min,
+            param_max=param_max,
+            method=method,
+        )
+        if verbose:
+            print(f"Least-squares optimization completed: params={out}")
+        return out
+    if optimizer != "grid":
+        raise ValueError("optimizer must be 'grid' or 'least_squares'")
+
     if num_grid < 3:
         raise ValueError("num_grid must be >= 3")
     if max_step < 1:
         raise ValueError("max_step must be >= 1")
     if small_dif <= 0:
         raise ValueError("small_dif must be > 0")
-    if param_min > param_max:
-        raise ValueError("param_min must be <= param_max")
-    if df.empty:
-        raise ValueError("df must contain at least one row")
-    _require_columns(df, ["Ave"])
 
     param_names = _METHOD_PARAMS[method]
     param_ranges = {name: [param_min, param_max] for name in param_names}
@@ -488,6 +585,7 @@ def get_month_params(
     num_grid=3,
     window_size=0,
     verbose=False,
+    optimizer="grid",
 ):
     if window_size < 0:
         raise ValueError("window_size must be >= 0")
@@ -508,10 +606,259 @@ def get_month_params(
             method=method,
             num_grid=num_grid,
             verbose=verbose,
+            optimizer=optimizer,
         )
         if verbose:
             print("Month", month_window, mparams[str(month)])
     return mparams
+
+
+def smooth_month_params(mparams, smooth_window=1, method="DH2006"):
+    method = _validate_method(method)
+    if smooth_window < 0:
+        raise ValueError("smooth_window must be >= 0")
+    if not mparams:
+        raise ValueError("mparams must contain at least one month")
+
+    param_names = _METHOD_PARAMS[method]
+    smoothed = {}
+    month_params = {int(month): params for month, params in mparams.items()}
+    for month, params in month_params.items():
+        _require_params(params, param_names)
+        month_window = numpy.arange(month - smooth_window, month + smooth_window + 1, 1)
+        month_window = [((int(value) - 1) % 12) + 1 for value in month_window]
+        neighbors = [month_params[value] for value in month_window if value in month_params]
+        smoothed_params = {
+            name: float(numpy.mean([neighbor[name] for neighbor in neighbors]))
+            for name in param_names
+        }
+        variances = [
+            neighbor["variance"]
+            for neighbor in neighbors
+            if "variance" in neighbor and pandas.notna(neighbor["variance"])
+        ]
+        if variances:
+            smoothed_params["variance"] = float(numpy.mean(variances))
+        smoothed[str(month)] = smoothed_params
+    return smoothed
+
+
+def get_cyclic_month_params(
+    df,
+    param_min=0,
+    param_max=10,
+    max_step=1000,
+    small_dif=10**-6,
+    method="DH2006",
+    num_grid=3,
+    window_size=1,
+    smooth_window=1,
+    verbose=False,
+    optimizer="least_squares",
+):
+    monthly_params = get_month_params(
+        df,
+        param_min=param_min,
+        param_max=param_max,
+        max_step=max_step,
+        small_dif=small_dif,
+        method=method,
+        num_grid=num_grid,
+        window_size=window_size,
+        verbose=verbose,
+        optimizer=optimizer,
+    )
+    return smooth_month_params(
+        monthly_params,
+        smooth_window=smooth_window,
+        method=method,
+    )
+
+
+def _spec_column(spec):
+    if "column" in spec:
+        return spec["column"]
+    name = spec.get("name")
+    if name:
+        return str(name).lower().replace(" ", "_").replace("-", "_")
+    kind = spec.get("kind", "yearly")
+    method = spec.get("method", "DH2006")
+    return f"Ave_est_{method}_{kind}"
+
+
+def _spec_name(spec, column):
+    return spec.get("name", column)
+
+
+def _fit_kwargs_from_spec(spec):
+    keys = ["param_min", "param_max", "max_step", "small_dif", "num_grid", "optimizer"]
+    return {key: spec[key] for key in keys if key in spec}
+
+
+def cross_validate_estimates(
+    df,
+    specs=None,
+    observed_column="Ave",
+    fold_column="Year",
+):
+    if specs is None:
+        specs = [
+            {"name": "Simple mean", "column": "Ave_simple", "kind": "simple"},
+            {
+                "name": "DH2006 yearly",
+                "column": "Ave_est_dh2006_yearly",
+                "kind": "yearly",
+                "method": "DH2006",
+                "optimizer": "least_squares",
+            },
+        ]
+    if not specs:
+        raise ValueError("specs must contain at least one estimate specification")
+
+    _require_columns(df, [observed_column, fold_column])
+    out = df.copy()
+    labels = {}
+    estimate_columns = []
+
+    for spec in specs:
+        column = _spec_column(spec)
+        labels[column] = _spec_name(spec, column)
+        estimate_columns.append(column)
+        if column not in out.columns:
+            out[column] = numpy.nan
+
+        kind = spec.get("kind", "yearly").lower().replace("-", "_")
+        if kind in {"simple", "simple_mean", "minmax", "min_max"}:
+            out.loc[:, column] = get_simple_average_temperature(out)
+            continue
+
+        method = _validate_method(spec.get("method", "DH2006"))
+        required_columns = [observed_column, *_method_required_columns(method)]
+        if kind in {
+            "monthly",
+            "monthly_smoothed",
+            "smoothed_monthly",
+            "seasonal",
+            "cyclic",
+            "cyclic_monthly",
+        }:
+            required_columns.append("Month")
+
+        fit_kwargs = _fit_kwargs_from_spec(spec)
+        for fold in sorted(out.loc[:, fold_column].dropna().unique()):
+            train = out.loc[out.loc[:, fold_column] != fold, :].dropna(subset=required_columns)
+            if train.empty:
+                continue
+            test_mask = out.loc[:, fold_column] == fold
+
+            if kind in {"yearly", "global", "single"}:
+                params = get_params(train, method=method, **fit_kwargs)
+                out.loc[test_mask, column] = get_average_temperature(
+                    out.loc[test_mask, :],
+                    params=params,
+                    method=method,
+                )
+            elif kind in {
+                "monthly",
+                "monthly_smoothed",
+                "smoothed_monthly",
+                "seasonal",
+                "cyclic",
+                "cyclic_monthly",
+            }:
+                if kind in {"monthly"}:
+                    monthly_params = get_month_params(
+                        train,
+                        method=method,
+                        window_size=spec.get("window_size", 0),
+                        **fit_kwargs,
+                    )
+                else:
+                    monthly_params = get_cyclic_month_params(
+                        train,
+                        method=method,
+                        window_size=spec.get("window_size", 1),
+                        smooth_window=spec.get("smooth_window", 1),
+                        **fit_kwargs,
+                    )
+                out.loc[test_mask, column] = get_month_average_temperature(
+                    out.loc[test_mask, :].copy(),
+                    monthly_params,
+                    method=method,
+                )
+            else:
+                raise ValueError(f"Unsupported estimate kind: {spec.get('kind')}")
+
+    metrics = get_estimation_error_metrics(
+        out,
+        estimate_columns=estimate_columns,
+        observed_column=observed_column,
+        labels=labels,
+    )
+    return out, metrics
+
+
+def select_month_window(
+    df,
+    windows=(0, 1, 2, 3),
+    method="DH2006",
+    observed_column="Ave",
+    fold_column="Year",
+    optimizer="least_squares",
+    metric="RMSE",
+    smooth_window=None,
+):
+    method = _validate_method(method)
+    windows = list(windows)
+    if not windows:
+        raise ValueError("windows must contain at least one value")
+
+    specs = []
+    column_to_window = {}
+    for window_size in windows:
+        if window_size < 0:
+            raise ValueError("window sizes must be >= 0")
+        kind = "monthly_smoothed" if smooth_window is not None else "monthly"
+        suffix = (
+            f"{method} monthly ws{window_size}"
+            if smooth_window is None
+            else f"{method} monthly ws{window_size} smooth{smooth_window}"
+        )
+        column = (
+            f"Ave_est_{method.lower()}_monthly_ws{window_size}"
+            if smooth_window is None
+            else f"Ave_est_{method.lower()}_monthly_ws{window_size}_smooth{smooth_window}"
+        )
+        specs.append(
+            {
+                "name": suffix,
+                "column": column,
+                "kind": kind,
+                "method": method,
+                "window_size": window_size,
+                "smooth_window": smooth_window or 0,
+                "optimizer": optimizer,
+            }
+        )
+        column_to_window[column] = int(window_size)
+
+    predictions, metrics = cross_validate_estimates(
+        df,
+        specs=specs,
+        observed_column=observed_column,
+        fold_column=fold_column,
+    )
+    if metric not in metrics.columns:
+        raise ValueError(f"metric must be one of: {', '.join(metrics.columns)}")
+    best_index = metrics.loc[:, metric].astype(float).idxmin()
+    best = metrics.loc[best_index, :].to_dict()
+    return {
+        "best_window": column_to_window[best["column"]],
+        "best": best,
+        "metric": metric,
+        "metrics": metrics,
+        "predictions": predictions,
+    }
 
 
 def _ephem_to_local_datetime(value, timezone):

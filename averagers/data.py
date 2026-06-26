@@ -93,6 +93,7 @@ def fetch_power_daily_temperature(
     community="AG",
     time_standard="LST",
     add_min_next=True,
+    add_max_prev=False,
     timeout=30,
     urlopen=None,
 ):
@@ -105,9 +106,10 @@ def fetch_power_daily_temperature(
 
     _validate_coordinates(lat, lon)
 
+    query_start = start - pandas.Timedelta(days=1) if add_max_prev else start
     query_end = end + pandas.Timedelta(days=1) if add_min_next else end
     url = _build_power_daily_url(
-        start_date=start,
+        start_date=query_start,
         end_date=query_end,
         lat=lat,
         lon=lon,
@@ -119,6 +121,8 @@ def fetch_power_daily_temperature(
 
     if add_min_next:
         df["Min_next"] = df["Min"].shift(-1)
+    if add_max_prev:
+        df["Max_prev"] = df["Max"].shift(1)
 
     requested = df.loc[df["Date"].between(start, end)].copy()
     requested.attrs["source"] = "NASA POWER Daily API"

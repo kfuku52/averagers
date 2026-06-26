@@ -23,6 +23,7 @@ def build_base_data():
         end_date=end_date,
         lat=lat,
         lon=lon,
+        add_max_prev=True,
     )
     weather["Date"] = pd.to_datetime(weather["Date"])
     weather["Year"] = weather["Date"].dt.year
@@ -34,74 +35,105 @@ def build_base_data():
         lon=lon,
         timezone=timezone,
     )
-    weather = weather.join(photoperiod[["Sunset_nondimensional"]])
-    weather["Ave_simple"] = averagers.get_simple_average_temperature(weather)
+    weather = weather.join(
+        photoperiod[["Sunrise_nondimensional", "Sunset_nondimensional"]]
+    )
     return weather
 
 
+def comparison_specs():
+    specs = [
+        {"name": "Simple mean", "column": "Ave_simple", "kind": "simple"},
+        {
+            "name": "DH2006 yearly",
+            "column": "Ave_est_dh2006_yearly",
+            "kind": "yearly",
+            "method": "DH2006",
+            "optimizer": "least_squares",
+        },
+    ]
+    specs.extend(
+        {
+            "name": f"DH2006 monthly ws{window_size}",
+            "column": f"Ave_est_dh2006_monthly_ws{window_size}",
+            "kind": "monthly",
+            "method": "DH2006",
+            "window_size": window_size,
+            "optimizer": "least_squares",
+        }
+        for window_size in WINDOW_SIZES
+    )
+    specs.extend(
+        [
+            {
+                "name": "DH2006 seasonal smooth",
+                "column": "Ave_est_dh2006_seasonal",
+                "kind": "cyclic",
+                "method": "DH2006",
+                "window_size": 1,
+                "smooth_window": 1,
+                "optimizer": "least_squares",
+            },
+            {
+                "name": "KF yearly",
+                "column": "Ave_est_kf_yearly",
+                "kind": "yearly",
+                "method": "KF",
+                "optimizer": "least_squares",
+            },
+            {
+                "name": "KF monthly ws1",
+                "column": "Ave_est_kf_monthly_ws1",
+                "kind": "monthly",
+                "method": "KF",
+                "window_size": 1,
+                "optimizer": "least_squares",
+            },
+        ]
+    )
+    return specs
+
+
 def add_cross_validated_estimates(weather):
-    weather = weather.copy()
-    weather["Ave_est_yearly"] = pd.NA
-    for window_size in WINDOW_SIZES:
-        weather[f"Ave_est_monthly_ws{window_size}"] = pd.NA
-
     started = perf_counter()
-    for year in sorted(weather["Year"].unique()):
-        train = weather.loc[weather["Year"] != year].dropna(
-            subset=["Ave", "Min", "Max", "Min_next", "Sunset_nondimensional", "Month"]
-        )
-        test_mask = weather["Year"] == year
-
-        yearly_params = averagers.get_params(train, method="DH2006")
-        weather.loc[test_mask, "Ave_est_yearly"] = averagers.get_average_temperature(
-            weather.loc[test_mask, :],
-            params=yearly_params,
-            method="DH2006",
-        )
-
-        for window_size in WINDOW_SIZES:
-            monthly_params = averagers.get_month_params(
-                train,
-                method="DH2006",
-                window_size=window_size,
-            )
-            column = f"Ave_est_monthly_ws{window_size}"
-            weather.loc[test_mask, column] = averagers.get_month_average_temperature(
-                weather.loc[test_mask, :].copy(),
-                monthly_params,
-                method="DH2006",
-            )
-
+    weather, metrics = averagers.cross_validate_estimates(
+        weather,
+        specs=comparison_specs(),
+    )
+    selection = averagers.select_month_window(
+        weather,
+        windows=WINDOW_SIZES,
+        method="DH2006",
+        optimizer="least_squares",
+    )
     weather.attrs["fit_seconds"] = perf_counter() - started
+    weather.attrs["metrics"] = metrics
+    weather.attrs["best_window"] = selection["best_window"]
     return weather
 
 
 def main():
     weather = add_cross_validated_estimates(build_base_data())
-    estimate_columns = ["Ave_simple", "Ave_est_yearly"] + [
-        f"Ave_est_monthly_ws{window_size}" for window_size in WINDOW_SIZES
-    ]
-    labels = {
-        "Ave_simple": "Simple mean",
-        "Ave_est_yearly": "DH2006 yearly",
-        **{
-            f"Ave_est_monthly_ws{window_size}": f"DH2006 monthly ws{window_size}"
-            for window_size in WINDOW_SIZES
-        },
-    }
+    specs = comparison_specs()
+    estimate_columns = [spec["column"] for spec in specs]
+    labels = {spec["column"]: spec["name"] for spec in specs}
 
     _fig, _axes, metrics = averagers.plot_estimation_error_comparison(
         weather,
         estimate_columns=estimate_columns,
         labels=labels,
         output=OUTPUT,
-        title="DH2006 parameter-window error, Tokyo 2020-2022",
+        title="Parameter and method error, Tokyo 2020-2022",
         scatter_alpha=0.12,
         scatter_size=7,
         legend_outside=True,
     )
     print(metrics[["estimate", "n", "RMSE", "Min error", "Max error"]].round(3).to_string(index=False))
-    print(f"Fitted leave-one-year-out DH2006 parameter options in {weather.attrs['fit_seconds']:.3f} s")
+    print(
+        "Best DH2006 monthly window by leave-one-year-out RMSE: "
+        f"{weather.attrs['best_window']}"
+    )
+    print(f"Fitted leave-one-year-out parameter options in {weather.attrs['fit_seconds']:.3f} s")
     print(f"Wrote {OUTPUT}")
 
 

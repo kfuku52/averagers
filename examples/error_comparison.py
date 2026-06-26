@@ -33,27 +33,24 @@ def build_comparison_data():
         timezone=timezone,
     )
     weather = weather.join(photoperiod[["Sunset_nondimensional"]])
-    weather["Ave_simple"] = averagers.get_simple_average_temperature(weather)
-    weather["Ave_est_cv"] = pd.NA
     weather["Year"] = weather["Date"].dt.year
 
     started = perf_counter()
-    fitted_params = {}
-    for year in sorted(weather["Year"].unique()):
-        train = weather.loc[weather["Year"] != year, :].dropna(
-            subset=["Ave", "Min", "Max", "Min_next", "Sunset_nondimensional"]
-        )
-        test_mask = weather["Year"] == year
-        params = averagers.get_params(train, method="DH2006")
-        fitted_params[int(year)] = params
-        weather.loc[test_mask, "Ave_est_cv"] = averagers.get_average_temperature(
-            weather.loc[test_mask, :],
-            params=params,
-            method="DH2006",
-        )
-
+    weather, metrics = averagers.cross_validate_estimates(
+        weather,
+        specs=[
+            {"name": "Simple mean", "column": "Ave_simple", "kind": "simple"},
+            {
+                "name": "DH2006 estimated",
+                "column": "Ave_est_cv",
+                "kind": "yearly",
+                "method": "DH2006",
+                "optimizer": "least_squares",
+            },
+        ],
+    )
     weather.attrs["fit_seconds"] = perf_counter() - started
-    weather.attrs["fitted_params"] = fitted_params
+    weather.attrs["metrics"] = metrics
     return weather
 
 
