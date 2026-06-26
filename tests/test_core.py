@@ -112,10 +112,75 @@ def test_estimation_error_metrics_and_plot(tmp_path):
     assert output.stat().st_size > 0
     assert plotted_metrics.shape[0] == 2
     assert len(axes) == 2
+    assert [tick.get_text() for tick in axes[1].get_xticklabels()] == ["RMSE"]
     matplotlib.pyplot.close(fig)
 
 
-def test_kf_uses_c3_for_post_sunset_temperature():
+def test_estimation_error_plot_can_hide_scatter(tmp_path):
+    matplotlib = pytest.importorskip("matplotlib")
+    matplotlib.use("Agg")
+
+    df = pandas.DataFrame(
+        {
+            "Ave": [10.0, 12.0, 14.0],
+            "Ave_simple": [11.0, 11.5, 13.0],
+            "Ave_est": [10.5, 12.0, 13.5],
+        }
+    )
+    output = tmp_path / "metrics_only.png"
+
+    fig, axes, metrics = averagers.plot_estimation_error_comparison(
+        df,
+        estimate_columns=["Ave_simple", "Ave_est"],
+        output=output,
+        show_scatter=False,
+    )
+
+    assert output.exists()
+    assert output.stat().st_size > 0
+    assert len(axes) == 1
+    assert axes[0].get_title() == "Error metrics"
+    assert [tick.get_text() for tick in axes[0].get_xticklabels()] == ["RMSE"]
+    assert metrics.shape[0] == 2
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_estimation_metric_by_setting_groups_methods(tmp_path):
+    matplotlib = pytest.importorskip("matplotlib")
+    matplotlib.use("Agg")
+
+    metrics = pandas.DataFrame(
+        {
+            "setting": ["simple mean", "yearly", "yearly", "ws0", "ws0"],
+            "method": ["Simple mean", "DH2006", "Diurnal3", "DH2006", "Diurnal3"],
+            "RMSE": [0.53, 0.5, 0.48, 0.46, 0.47],
+        }
+    )
+    output = tmp_path / "setting_plot.png"
+
+    fig, ax = averagers.plot_estimation_metric_by_setting(
+        metrics,
+        setting_order=["simple mean", "yearly", "ws0"],
+        method_order=["Simple mean", "DH2006", "Diurnal3"],
+        output=output,
+    )
+
+    assert output.exists()
+    assert output.stat().st_size > 0
+    assert [tick.get_text() for tick in ax.get_xticklabels()] == [
+        "simple mean",
+        "yearly",
+        "ws0",
+    ]
+    assert [text.get_text() for text in ax.get_legend().get_texts()] == [
+        "Simple mean",
+        "DH2006",
+        "Diurnal3",
+    ]
+    matplotlib.pyplot.close(fig)
+
+
+def test_diurnal3_uses_c3_for_post_sunset_temperature():
     df = pandas.DataFrame(
         {
             "Min": [10.0],
@@ -130,7 +195,7 @@ def test_kf_uses_c3_for_post_sunset_temperature():
     ave = averagers.get_average_temperature(
         df,
         params={"C1": 0.0, "C2": 1.0, "C3": 0.5},
-        method="KF",
+        method="Diurnal3",
     )
 
     assert numpy.allclose(ave, [17.75])
@@ -197,7 +262,7 @@ def test_least_squares_recovers_dh2006_params():
     assert numpy.isclose(params["variance"], 0)
 
 
-def test_least_squares_recovers_kf_params():
+def test_least_squares_recovers_diurnal3_params():
     df = pandas.DataFrame(
         {
             "Min": [9.0, 11.0, 8.0, 13.0],
@@ -209,11 +274,11 @@ def test_least_squares_recovers_kf_params():
         }
     )
     expected = {"C1": 0.2, "C2": 0.6, "C3": 0.15}
-    df["Ave"] = averagers.get_average_temperature(df, expected, method="KF")
+    df["Ave"] = averagers.get_average_temperature(df, expected, method="Diurnal3")
 
     params = averagers.get_params(
         df,
-        method="KF",
+        method="Diurnal3",
         param_min=0,
         param_max=1,
         optimizer="least_squares",
@@ -223,6 +288,153 @@ def test_least_squares_recovers_kf_params():
     assert numpy.isclose(params["C2"], expected["C2"])
     assert numpy.isclose(params["C3"], expected["C3"])
     assert numpy.isclose(params["variance"], 0)
+
+
+def test_linear_temporal_params_and_cross_validation():
+    rows = []
+    for year in [2020, 2021, 2022]:
+        for month in range(1, 13):
+            sunrise = 0.2 + (month % 4) * 0.015
+            sunset = 0.62 + (month % 5) * 0.025
+            min_value = 4.0 + month * 0.7 + (year - 2020) * 0.1
+            max_value = min_value + 8.0 + (month % 3)
+            rows.append(
+                {
+                    "Date": pandas.Timestamp(year=year, month=month, day=15),
+                    "Year": year,
+                    "Month": month,
+                    "Min": min_value,
+                    "Max": max_value,
+                    "Min_next": min_value + 0.3,
+                    "Max_prev": max_value - 0.4,
+                    "Sunrise_nondimensional": sunrise,
+                    "Sunset_nondimensional": sunset,
+                    "Daytime": (sunset - sunrise) * 24,
+                }
+            )
+    df = pandas.DataFrame(rows)
+    expected = {
+        "feature_set": "temporal",
+        "coefficients": {
+            "Intercept": 1.0,
+            "Min": 0.25,
+            "Max": 0.45,
+            "Min_next": 0.15,
+            "Max_prev": 0.12,
+            "Sunrise": 0.3,
+            "Sunset": -0.2,
+        },
+    }
+    df["Ave"] = averagers.get_linear_average_temperature(df, expected)
+
+    params = averagers.get_linear_params(df, feature_set="temporal")
+    predicted = averagers.get_linear_average_temperature(df, params)
+
+    assert numpy.isclose(params["variance"], 0)
+    assert numpy.allclose(predicted, df["Ave"])
+
+    monthly_params = averagers.get_month_linear_params(
+        df,
+        feature_set="temporal",
+        window_size=1,
+        ridge=0.1,
+    )
+    monthly_predicted = averagers.get_month_linear_average_temperature(
+        df.copy(),
+        monthly_params,
+    )
+    assert monthly_predicted.notna().all()
+
+    monthly_linear_specs = [
+        {
+            "name": f"Monthly linear temporal ws{window_size}",
+            "column": f"Ave_est_monthly_linear_ws{window_size}",
+            "kind": "monthly_linear",
+            "method": "Monthly linear",
+            "setting": f"ws{window_size}",
+            "feature_set": "temporal",
+            "window_size": window_size,
+            "ridge": 0.1,
+        }
+        for window_size in range(4)
+    ]
+    auto_candidates = [
+        {
+            "name": "DH2006 monthly ws0",
+            "column": "_auto_dh2006_monthly_ws0",
+            "kind": "monthly",
+            "method": "DH2006",
+            "setting": "ws0",
+            "window_size": 0,
+            "optimizer": "least_squares",
+        },
+        {
+            "name": "Diurnal3 monthly ws0",
+            "column": "_auto_diurnal3_monthly_ws0",
+            "kind": "monthly",
+            "method": "Diurnal3",
+            "setting": "ws0",
+            "window_size": 0,
+            "optimizer": "least_squares",
+        },
+        {
+            "name": "Monthly linear temporal ws0",
+            "column": "_auto_monthly_linear_ws0",
+            "kind": "monthly_linear",
+            "method": "Monthly linear",
+            "setting": "ws0",
+            "feature_set": "temporal",
+            "window_size": 0,
+            "ridge": 0.1,
+        },
+        {
+            "name": "Linear harmonic",
+            "column": "_auto_linear_harmonic",
+            "kind": "linear",
+            "method": "Harmonic",
+            "setting": "harmonic",
+            "feature_set": "harmonic",
+        },
+    ]
+    default_candidates = averagers.get_default_auto_candidates(
+        windows=[0],
+        smoothed_windows=[1],
+    )
+    assert any(candidate["method"] == "Diurnal3" for candidate in default_candidates)
+
+    predictions, metrics = averagers.cross_validate_estimates(
+        df,
+        specs=[
+            *monthly_linear_specs,
+            {
+                "name": "Linear harmonic",
+                "column": "Ave_est_harmonic",
+                "kind": "linear",
+                "method": "Harmonic",
+                "setting": "harmonic",
+                "feature_set": "harmonic",
+            },
+            {
+                "name": "Auto best",
+                "column": "Ave_est_auto",
+                "kind": "auto",
+                "method": "Auto",
+                "setting": "auto",
+                "candidates": auto_candidates,
+                "selection_scope": "global",
+            },
+        ],
+    )
+
+    expected_columns = {
+        *(f"Ave_est_monthly_linear_ws{window_size}" for window_size in range(4)),
+        "Ave_est_harmonic",
+        "Ave_est_auto",
+    }
+    assert expected_columns.issubset(predictions.columns)
+    assert list(metrics["feature_set"].head(4)) == ["temporal"] * 4
+    assert metrics.loc[metrics["estimate"] == "Auto best", "setting"].item() == "auto"
+    assert "all" in predictions.attrs["selected_candidates"]["Ave_est_auto"]
 
 
 def test_get_month_params_wraps_windows_across_year_boundary():
@@ -296,9 +508,9 @@ def test_cross_validate_estimates_and_select_month_window():
                 "optimizer": "least_squares",
             },
             {
-                "name": "DH2006 seasonal smooth",
+                "name": "DH2006 smoothed ws1",
                 "column": "Ave_est_seasonal",
-                "kind": "cyclic",
+                "kind": "smoothed",
                 "method": "DH2006",
                 "window_size": 1,
                 "smooth_window": 1,
@@ -313,7 +525,7 @@ def test_cross_validate_estimates_and_select_month_window():
     assert list(metrics["estimate"]) == [
         "Simple mean",
         "DH2006 monthly ws1",
-        "DH2006 seasonal smooth",
+        "DH2006 smoothed ws1",
     ]
 
     selection = averagers.select_month_window(
@@ -325,6 +537,37 @@ def test_cross_validate_estimates_and_select_month_window():
 
     assert selection["best_window"] in {0, 1}
     assert selection["metrics"].shape[0] == 2
+
+    auto_predictions, auto_metrics = averagers.cross_validate_estimates(
+        df,
+        specs=[
+            {
+                "name": "DH2006 auto",
+                "column": "Ave_est_monthly_auto",
+                "kind": "auto",
+                "method": "DH2006",
+                "setting": "auto",
+                "windows": [0, 1],
+                "smoothed_windows": [1],
+                "optimizer": "least_squares",
+            }
+        ],
+    )
+
+    assert "Ave_est_monthly_auto" in auto_predictions.columns
+    assert auto_predictions["Ave_est_monthly_auto"].notna().any()
+    assert auto_metrics.loc[0, "estimate"] == "DH2006 auto"
+    assert auto_metrics.loc[0, "setting"] == "auto"
+    assert set(auto_predictions.attrs["selected_windows"]["Ave_est_monthly_auto"]) == {
+        2020,
+        2021,
+        2022,
+    }
+    assert set(auto_predictions.attrs["selected_settings"]["Ave_est_monthly_auto"]) == {
+        2020,
+        2021,
+        2022,
+    }
 
 
 def test_get_photoperiod_returns_local_day_fractions():

@@ -1,4 +1,7 @@
+import hashlib
 import json
+from pathlib import Path
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -39,14 +42,41 @@ def _build_power_daily_url(start_date, end_date, lat, lon, community, time_stand
     return f"{POWER_DAILY_POINT_URL}?{urllib.parse.urlencode(query)}"
 
 
-def _open_json_url(url, timeout, urlopen):
+def _open_json_url(url, timeout, urlopen, retries=2, retry_delay=1.0, sleep=None):
     opener = urlopen or urllib.request.urlopen
     request = urllib.request.Request(url, headers={"User-Agent": "averagers"})
+    if retries < 0:
+        raise ValueError("retries must be >= 0")
+    sleep = time.sleep if sleep is None else sleep
+    last_error = None
+    for attempt in range(retries + 1):
+        try:
+            with opener(request, timeout=timeout) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except (TimeoutError, urllib.error.URLError) as exc:
+            last_error = exc
+            if attempt < retries and retry_delay > 0:
+                sleep(retry_delay)
+    raise RuntimeError(f"NASA POWER request failed: {last_error}") from last_error
+
+
+def _cache_path_for_url(cache_dir, url):
+    digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    return Path(cache_dir).expanduser() / f"{digest}.json"
+
+
+def _read_cached_json(cache_path):
     try:
-        with opener(request, timeout=timeout) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"NASA POWER request failed: {exc}") from exc
+        return json.loads(cache_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except json.JSONDecodeError:
+        return None
+
+
+def _write_cached_json(cache_path, payload):
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
 
 
 def _temperature_frame_from_power_response(payload):
@@ -95,7 +125,12 @@ def fetch_power_daily_temperature(
     add_min_next=True,
     add_max_prev=False,
     timeout=30,
+    retries=2,
+    retry_delay=1.0,
+    cache_dir=None,
+    force_refresh=False,
     urlopen=None,
+    sleep=None,
 ):
     start = pandas.Timestamp(start_date)
     end = pandas.Timestamp(end_date)
@@ -116,7 +151,34 @@ def fetch_power_daily_temperature(
         community=community,
         time_standard=time_standard,
     )
-    payload = _open_json_url(url, timeout=timeout, urlopen=urlopen)
+    cache_path = None
+    cache_status = None
+    if cache_dir is not None:
+        cache_path = _cache_path_for_url(cache_dir, url)
+        if not force_refresh:
+            payload = _read_cached_json(cache_path)
+            if payload is not None:
+                cache_status = "hit"
+            else:
+                cache_status = "miss"
+        else:
+            payload = None
+            cache_status = "refresh"
+    else:
+        payload = None
+
+    if payload is None:
+        payload = _open_json_url(
+            url,
+            timeout=timeout,
+            urlopen=urlopen,
+            retries=retries,
+            retry_delay=retry_delay,
+            sleep=sleep,
+        )
+        if cache_path is not None:
+            _write_cached_json(cache_path, payload)
+
     df = _temperature_frame_from_power_response(payload)
 
     if add_min_next:
@@ -127,4 +189,7 @@ def fetch_power_daily_temperature(
     requested = df.loc[df["Date"].between(start, end)].copy()
     requested.attrs["source"] = "NASA POWER Daily API"
     requested.attrs["url"] = url
+    if cache_path is not None:
+        requested.attrs["cache_path"] = str(cache_path)
+        requested.attrs["cache_status"] = cache_status
     return requested.reset_index(drop=True)
