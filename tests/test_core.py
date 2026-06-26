@@ -9,7 +9,7 @@ import averagers
 
 
 def test_version_is_exposed():
-    assert averagers.__version__ == "0.1.0"
+    assert averagers.__version__ == "0.2.0"
     try:
         installed_version = version("averagers")
     except PackageNotFoundError:
