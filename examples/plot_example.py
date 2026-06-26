@@ -22,8 +22,10 @@ def build_example_data():
         end_date=end_date,
         lat=lat,
         lon=lon,
+        add_max_prev=True,
     )
     weather["Date"] = pd.to_datetime(weather["Date"])
+    weather["Year"] = weather["Date"].dt.year
 
     photoperiod = averagers.get_photoperiod(
         start_date=start_date,
@@ -32,16 +34,27 @@ def build_example_data():
         lon=lon,
         timezone=timezone,
     )
-    weather = weather.join(photoperiod[["Sunset_nondimensional"]])
-    started = perf_counter()
-    params = averagers.get_params(weather, method="DH2006", optimizer="least_squares")
-    fit_seconds = perf_counter() - started
-    weather["Ave_sim"] = averagers.get_average_temperature(
-        weather,
-        params=params,
-        method="DH2006",
+    weather = weather.join(
+        photoperiod[["Sunrise_nondimensional", "Sunset_nondimensional", "Daytime"]]
     )
-    weather.attrs["params"] = params
+    started = perf_counter()
+    weather, metrics = averagers.cross_validate_estimates(
+        weather,
+        specs=[
+            {"name": "Simple mean", "column": "Ave_simple", "kind": "simple"},
+            {
+                "name": "Auto best",
+                "column": "Ave_est_auto",
+                "kind": "auto",
+                "method": "Auto",
+                "setting": "auto",
+                "candidates": averagers.get_default_auto_candidates(),
+                "selection_scope": "global",
+            },
+        ],
+    )
+    fit_seconds = perf_counter() - started
+    weather.attrs["metrics"] = metrics
     weather.attrs["fit_seconds"] = fit_seconds
     return weather
 
@@ -51,14 +64,19 @@ def main():
 
     averagers.plot_temperature_estimates(
         weather,
+        estimated_column="Ave_est_auto",
+        simple_average_column="Ave_simple",
         output=OUTPUT,
-        title="Estimated daily mean temperature, Tokyo 2020-2022",
+        title="Auto-estimated daily mean temperature, Tokyo 2020-2022",
     )
-    params = weather.attrs["params"]
+    selected = weather.attrs["selected_candidates"]["Ave_est_auto"]["all"]
+    rmse = weather.attrs["metrics"].loc[
+        weather.attrs["metrics"]["estimate"] == "Auto best",
+        "RMSE",
+    ].item()
     print(
-        "Fitted DH2006 params from NASA POWER T2M: "
-        f"CD={params['CD']:.3f}, CN={params['CN']:.3f} "
-        f"in {weather.attrs['fit_seconds']:.3f} s"
+        f"Auto-selected candidate: {selected}; "
+        f"RMSE={rmse:.3f}; fit={weather.attrs['fit_seconds']:.3f} s"
     )
     print(f"Wrote {OUTPUT}")
 

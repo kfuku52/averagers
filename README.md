@@ -48,9 +48,9 @@ DH2006 splits the day at sunset and fits two parameters, `CD` and `CN`, for dayt
 
 ## Estimated Mean Plot
 
-![Estimated daily mean temperature, Tokyo 2020-2022](docs/example_plot.png)
+![Auto-estimated daily mean temperature, Tokyo 2020-2022](docs/example_plot.png)
 
-This example downloads three years of daily NASA POWER data for Tokyo, fits DH2006 parameters against NASA POWER `T2M`, and plots the estimated daily mean against the simple min/max mean.
+This example downloads three years of daily NASA POWER data for Tokyo, uses `Auto best` against NASA POWER `T2M`, and plots the selected estimate against the simple min/max mean.
 
 ```python
 from time import perf_counter
@@ -70,8 +70,10 @@ weather = averagers.fetch_power_daily_temperature(
     end_date=end_date,
     lat=lat,
     lon=lon,
+    add_max_prev=True,
 )
 weather["Date"] = pd.to_datetime(weather["Date"])
+weather["Year"] = weather["Date"].dt.year
 
 photoperiod = averagers.get_photoperiod(
     start_date=start_date,
@@ -80,25 +82,39 @@ photoperiod = averagers.get_photoperiod(
     lon=lon,
     timezone=timezone,
 )
-weather = weather.join(photoperiod[["Sunset_nondimensional"]])
+weather = weather.join(
+    photoperiod[["Sunrise_nondimensional", "Sunset_nondimensional", "Daytime"]]
+)
 
 started = perf_counter()
-params = averagers.get_params(weather, method="DH2006", optimizer="least_squares")
-fit_seconds = perf_counter() - started
-
-weather["Ave_sim"] = averagers.get_average_temperature(
+weather, metrics = averagers.cross_validate_estimates(
     weather,
-    params=params,
-    method="DH2006",
+    specs=[
+        {"name": "Simple mean", "column": "Ave_simple", "kind": "simple"},
+        {
+            "name": "Auto best",
+            "column": "Ave_est_auto",
+            "kind": "auto",
+            "method": "Auto",
+            "setting": "auto",
+            "candidates": averagers.get_default_auto_candidates(),
+            "selection_scope": "global",
+        },
+    ],
 )
+fit_seconds = perf_counter() - started
 
 averagers.plot_temperature_estimates(
     weather,
+    estimated_column="Ave_est_auto",
+    simple_average_column="Ave_simple",
     output="docs/example_plot.png",
-    title="Estimated daily mean temperature, Tokyo 2020-2022",
+    title="Auto-estimated daily mean temperature, Tokyo 2020-2022",
 )
 
-print(f"CD={params['CD']:.3f}, CN={params['CN']:.3f}, fit={fit_seconds:.3f} s")
+print(weather.attrs["selected_candidates"]["Ave_est_auto"]["all"])
+print(metrics[["estimate", "RMSE"]].round(3))
+print(f"fit={fit_seconds:.3f} s")
 ```
 
 Run the script version:
