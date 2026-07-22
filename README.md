@@ -1,3 +1,5 @@
+![averagers — Daily mean temperature from daily minima and maxima](docs/assets/averagers-header.png)
+
 # averagers
 
 [![Python >=3.10](https://img.shields.io/badge/python-%3E=3.10-blue.svg)](https://www.python.org/)
