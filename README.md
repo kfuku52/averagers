@@ -204,6 +204,13 @@ python examples/window_size_comparison.py
 
 In the generated Tokyo 2020-2022 example, `Auto best` selects among DH2006, Diurnal3, monthly linear temporal, and linear harmonic candidates.
 
+## Case Studies
+
+The [cherry-flowering pilot](report/cherry_phenology/README.md) applies the
+temperature reconstruction methods to 45 years of JMA flowering observations
+at ten Japanese stations. It includes a reproducible analysis and a compact
+machine-readable result summary.
+
 ## Citation
 
 This program was reported in:
