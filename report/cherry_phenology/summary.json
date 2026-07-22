@@ -1,0 +1,305 @@
+{
+  "design": {
+    "stations": 10,
+    "year_start": 1981,
+    "year_end": 2025,
+    "phenology_records": 450,
+    "temperature_days_complete": 164350,
+    "temperature_reference": "NASA POWER T2M",
+    "validation": "leave-one-year-out",
+    "bootstrap_replicates": 5000
+  },
+  "daily_temperature_metrics": [
+    {
+      "Method": "Simple min-max mean",
+      "N_days": 164350,
+      "RMSE_C": 0.5191679033169323,
+      "MAE_C": 0.405056769090356,
+      "Mean_error_C": 0.19484149680559784
+    },
+    {
+      "Method": "DH2006",
+      "N_days": 164350,
+      "RMSE_C": 0.4898110913090908,
+      "MAE_C": 0.3630189795406277,
+      "Mean_error_C": 0.012906210515071468
+    },
+    {
+      "Method": "Diurnal3",
+      "N_days": 164350,
+      "RMSE_C": 0.46419513775190085,
+      "MAE_C": 0.34252784724438784,
+      "Mean_error_C": 0.020030703064611542
+    }
+  ],
+  "flowering_prediction_metrics": [
+    {
+      "Method": "DH2006",
+      "Base_temperature_C": 0.0,
+      "N_station_years": 450,
+      "RMSE_days": 5.956322504513819,
+      "MAE_days": 4.406666666666666,
+      "Mean_error_days": 0.5266666666666666,
+      "Pearson_r": 0.9051874213404816
+    },
+    {
+      "Method": "DH2006",
+      "Base_temperature_C": 5.0,
+      "N_station_years": 450,
+      "RMSE_days": 7.235867451645157,
+      "MAE_days": 5.415555555555556,
+      "Mean_error_days": 0.06888888888888889,
+      "Pearson_r": 0.8855488721082243
+    },
+    {
+      "Method": "DH2006",
+      "Base_temperature_C": 10.0,
+      "N_station_years": 450,
+      "RMSE_days": 32.84864279286639,
+      "MAE_days": 17.095555555555556,
+      "Mean_error_days": -10.366666666666667,
+      "Pearson_r": 0.2440679695465405
+    },
+    {
+      "Method": "Diurnal3",
+      "Base_temperature_C": 0.0,
+      "N_station_years": 450,
+      "RMSE_days": 5.888217991133745,
+      "MAE_days": 4.346666666666667,
+      "Mean_error_days": 0.5288888888888889,
+      "Pearson_r": 0.9066858156281002
+    },
+    {
+      "Method": "Diurnal3",
+      "Base_temperature_C": 5.0,
+      "N_station_years": 450,
+      "RMSE_days": 6.982040453111747,
+      "MAE_days": 5.228888888888889,
+      "Mean_error_days": 0.07333333333333333,
+      "Pearson_r": 0.8905018067075681
+    },
+    {
+      "Method": "Diurnal3",
+      "Base_temperature_C": 10.0,
+      "N_station_years": 450,
+      "RMSE_days": 32.79715434810364,
+      "MAE_days": 16.973333333333333,
+      "Mean_error_days": -10.293333333333333,
+      "Pearson_r": 0.2421782419239027
+    },
+    {
+      "Method": "POWER daily mean",
+      "Base_temperature_C": 0.0,
+      "N_station_years": 450,
+      "RMSE_days": 5.94792213951879,
+      "MAE_days": 4.417777777777777,
+      "Mean_error_days": 0.4888888888888889,
+      "Pearson_r": 0.9056805575588176
+    },
+    {
+      "Method": "POWER daily mean",
+      "Base_temperature_C": 5.0,
+      "N_station_years": 450,
+      "RMSE_days": 6.861000898799921,
+      "MAE_days": 5.157777777777778,
+      "Mean_error_days": 0.26,
+      "Pearson_r": 0.8914361428172353
+    },
+    {
+      "Method": "POWER daily mean",
+      "Base_temperature_C": 10.0,
+      "N_station_years": 450,
+      "RMSE_days": 32.83852750792716,
+      "MAE_days": 16.90222222222222,
+      "Mean_error_days": -10.2,
+      "Pearson_r": 0.2417747924502515
+    },
+    {
+      "Method": "Simple min-max mean",
+      "Base_temperature_C": 0.0,
+      "N_station_years": 450,
+      "RMSE_days": 5.807466458505521,
+      "MAE_days": 4.295555555555556,
+      "Mean_error_days": 0.5311111111111111,
+      "Pearson_r": 0.9086685919459937
+    },
+    {
+      "Method": "Simple min-max mean",
+      "Base_temperature_C": 5.0,
+      "N_station_years": 450,
+      "RMSE_days": 6.9906286476173864,
+      "MAE_days": 5.246666666666667,
+      "Mean_error_days": 0.12222222222222222,
+      "Pearson_r": 0.8895953040424017
+    },
+    {
+      "Method": "Simple min-max mean",
+      "Base_temperature_C": 10.0,
+      "N_station_years": 450,
+      "RMSE_days": 10.798971144408979,
+      "MAE_days": 7.688888888888889,
+      "Mean_error_days": -0.32,
+      "Pearson_r": 0.7975978697984191
+    }
+  ],
+  "bootstrap_error_penalty": [
+    {
+      "Method": "DH2006",
+      "Base_temperature_C": 0.0,
+      "Mean_absolute_error_penalty_days": -0.011111111111111112,
+      "CI95_low": -0.13111111111111112,
+      "CI95_high": 0.1111111111111111
+    },
+    {
+      "Method": "DH2006",
+      "Base_temperature_C": 5.0,
+      "Mean_absolute_error_penalty_days": 0.2577777777777778,
+      "CI95_low": -0.017833333333333316,
+      "CI95_high": 0.6001666666666642
+    },
+    {
+      "Method": "DH2006",
+      "Base_temperature_C": 10.0,
+      "Mean_absolute_error_penalty_days": 0.19333333333333333,
+      "CI95_low": -0.3711111111111111,
+      "CI95_high": 0.8355555555555556
+    },
+    {
+      "Method": "Diurnal3",
+      "Base_temperature_C": 0.0,
+      "Mean_absolute_error_penalty_days": -0.07111111111111111,
+      "CI95_low": -0.2111111111111111,
+      "CI95_high": 0.06444444444444444
+    },
+    {
+      "Method": "Diurnal3",
+      "Base_temperature_C": 5.0,
+      "Mean_absolute_error_penalty_days": 0.07111111111111111,
+      "CI95_low": -0.17783333333333332,
+      "CI95_high": 0.3333333333333333
+    },
+    {
+      "Method": "Diurnal3",
+      "Base_temperature_C": 10.0,
+      "Mean_absolute_error_penalty_days": 0.07111111111111111,
+      "CI95_low": -0.3977777777777778,
+      "CI95_high": 0.6466666666666666
+    },
+    {
+      "Method": "POWER daily mean",
+      "Base_temperature_C": 0.0,
+      "Mean_absolute_error_penalty_days": 0.0,
+      "CI95_low": 0.0,
+      "CI95_high": 0.0
+    },
+    {
+      "Method": "POWER daily mean",
+      "Base_temperature_C": 5.0,
+      "Mean_absolute_error_penalty_days": 0.0,
+      "CI95_low": 0.0,
+      "CI95_high": 0.0
+    },
+    {
+      "Method": "POWER daily mean",
+      "Base_temperature_C": 10.0,
+      "Mean_absolute_error_penalty_days": 0.0,
+      "CI95_low": 0.0,
+      "CI95_high": 0.0
+    },
+    {
+      "Method": "Simple min-max mean",
+      "Base_temperature_C": 0.0,
+      "Mean_absolute_error_penalty_days": -0.12222222222222222,
+      "CI95_low": -0.26005555555555554,
+      "CI95_high": 0.006722222222221414
+    },
+    {
+      "Method": "Simple min-max mean",
+      "Base_temperature_C": 5.0,
+      "Mean_absolute_error_penalty_days": 0.08888888888888889,
+      "CI95_low": -0.19111111111111112,
+      "CI95_high": 0.41333333333333333
+    },
+    {
+      "Method": "Simple min-max mean",
+      "Base_temperature_C": 10.0,
+      "Mean_absolute_error_penalty_days": -9.213333333333333,
+      "CI95_low": -27.698,
+      "CI95_high": 0.13116666666666588
+    }
+  ],
+  "thermal_requirement_shift": [
+    {
+      "Method": "DH2006",
+      "Base_temperature_C": 0.0,
+      "N_stations": 10,
+      "Median_shift_percent": 0.9343099862440238,
+      "Minimum_shift_percent": -0.3052354734566685,
+      "Maximum_shift_percent": 5.3036170796303015
+    },
+    {
+      "Method": "DH2006",
+      "Base_temperature_C": 5.0,
+      "N_stations": 10,
+      "Median_shift_percent": -2.89533648737069,
+      "Minimum_shift_percent": -6.326417231682409,
+      "Maximum_shift_percent": 9.548721954727936
+    },
+    {
+      "Method": "DH2006",
+      "Base_temperature_C": 10.0,
+      "N_stations": 9,
+      "Median_shift_percent": -23.350594832076464,
+      "Minimum_shift_percent": -45.35565182353377,
+      "Maximum_shift_percent": 37.68562357046554
+    },
+    {
+      "Method": "Diurnal3",
+      "Base_temperature_C": 0.0,
+      "N_stations": 10,
+      "Median_shift_percent": -0.3429157010744976,
+      "Minimum_shift_percent": -1.8524259779605563,
+      "Maximum_shift_percent": 1.6105310606716812
+    },
+    {
+      "Method": "Diurnal3",
+      "Base_temperature_C": 5.0,
+      "N_stations": 10,
+      "Median_shift_percent": -6.108231832868698,
+      "Minimum_shift_percent": -10.732594066644873,
+      "Maximum_shift_percent": 10.403244009293656
+    },
+    {
+      "Method": "Diurnal3",
+      "Base_temperature_C": 10.0,
+      "N_stations": 9,
+      "Median_shift_percent": -26.867099752913127,
+      "Minimum_shift_percent": -48.031822232748404,
+      "Maximum_shift_percent": 44.0188626162882
+    },
+    {
+      "Method": "Simple min-max mean",
+      "Base_temperature_C": 0.0,
+      "N_stations": 10,
+      "Median_shift_percent": 4.76440448511771,
+      "Minimum_shift_percent": -0.18995433789953672,
+      "Maximum_shift_percent": 13.155755090497749
+    },
+    {
+      "Method": "Simple min-max mean",
+      "Base_temperature_C": 5.0,
+      "N_stations": 10,
+      "Median_shift_percent": 6.551864016348675,
+      "Minimum_shift_percent": -0.9543607672682518,
+      "Maximum_shift_percent": 18.55320844958151
+    },
+    {
+      "Method": "Simple min-max mean",
+      "Base_temperature_C": 10.0,
+      "N_stations": 9,
+      "Median_shift_percent": -1.0511438918823282,
+      "Minimum_shift_percent": -23.817034700315453,
+      "Maximum_shift_percent": 90.47619047619068
+    }
+  ]
+}
